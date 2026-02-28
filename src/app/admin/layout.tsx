@@ -20,6 +20,9 @@ export default async function AdminLayout({ children }: { children: React.ReactN
           <Link href="/admin/wod" className="block rounded px-3 py-2 hover:bg-muted">
             WOD 관리
           </Link>
+          <Link href="/admin/wod/generate" className="block rounded px-3 py-2 hover:bg-muted">
+            WOD 생성기
+          </Link>
           <Link href="/admin/users" className="block rounded px-3 py-2 hover:bg-muted">
             회원 관리
           </Link>
