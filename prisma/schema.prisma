@@ -1,0 +1,233 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserLevel {
+  BEGINNER
+  INTERMEDIATE
+  RX
+  RX_PLUS
+}
+
+enum UserRole {
+  USER
+  ADMIN
+}
+
+enum WodType {
+  FOR_TIME
+  AMRAP
+  EMOM
+  ONE_RM
+  TABATA
+  OTHER
+}
+
+enum RxScaled {
+  RX
+  SCALED
+}
+
+enum PostCategory {
+  FREE
+  QUESTION
+  CERTIFICATION
+  INFO
+}
+
+enum ReportTargetType {
+  POST
+  COMMENT
+}
+
+enum ReportStatus {
+  PENDING
+  RESOLVED
+  DISMISSED
+}
+
+enum NotificationType {
+  COMMENT_ON_POST
+  REPLY_ON_COMMENT
+  PR_ACHIEVED
+  ADMIN_NOTICE
+}
+
+model User {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  password     String?
+  name         String
+  nickname     String    @unique
+  profileImage String?
+  box          String?
+  experience   Int       @default(0)
+  level        UserLevel @default(BEGINNER)
+  role         UserRole  @default(USER)
+  isBlocked    Boolean   @default(false)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  accounts      Account[]
+  wodResults    WODResult[]
+  prs           PR[]
+  posts         Post[]
+  comments      Comment[]
+  likes         Like[]
+  reports       Report[]   @relation("ReportReporter")
+  notifications Notification[]
+  createdWods   WOD[]
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model WOD {
+  id          String   @id @default(cuid())
+  title       String
+  description String
+  type        WodType
+  movements   String[]
+  date        DateTime @unique @db.Date
+  createdById String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  creator User        @relation(fields: [createdById], references: [id])
+  results WODResult[]
+}
+
+model WODResult {
+  id         String   @id @default(cuid())
+  wodId      String
+  userId     String
+  score      String
+  rxOrScaled RxScaled @default(RX)
+  memo       String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  wod  WOD  @relation(fields: [wodId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([wodId, userId])
+  @@index([wodId, createdAt])
+  @@index([userId])
+}
+
+model PR {
+  id        String   @id @default(cuid())
+  userId    String
+  movement  String
+  value     Float
+  unit      String   @default("kg")
+  memo      String?
+  date      DateTime @db.Date
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, movement])
+}
+
+model Post {
+  id        String       @id @default(cuid())
+  userId    String
+  category  PostCategory
+  title     String
+  content   String
+  images    String[]
+  views     Int          @default(0)
+  isHidden  Boolean      @default(false)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  comments Comment[]
+  likes    Like[]
+  reports  Report[]  @relation("ReportPost")
+
+  @@index([category, createdAt])
+  @@index([userId])
+}
+
+model Comment {
+  id        String   @id @default(cuid())
+  postId    String
+  userId    String
+  parentId  String?
+  content   String
+  isHidden  Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  post    Post      @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user    User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  parent  Comment?  @relation("CommentReplies", fields: [parentId], references: [id])
+  replies Comment[] @relation("CommentReplies")
+  reports Report[]  @relation("ReportComment")
+
+  @@index([postId, createdAt])
+}
+
+model Like {
+  id        String   @id @default(cuid())
+  postId    String
+  userId    String
+  createdAt DateTime @default(now())
+
+  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([postId, userId])
+}
+
+model Report {
+  id         String           @id @default(cuid())
+  targetType ReportTargetType
+  postId     String?
+  commentId  String?
+  reporterId String
+  reason     String
+  status     ReportStatus     @default(PENDING)
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+
+  reporter User    @relation("ReportReporter", fields: [reporterId], references: [id], onDelete: Cascade)
+  post     Post?    @relation("ReportPost", fields: [postId], references: [id])
+  comment  Comment? @relation("ReportComment", fields: [commentId], references: [id])
+}
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String
+  type      NotificationType
+  message   String
+  isRead    Boolean          @default(false)
+  relatedId String?
+  createdAt DateTime         @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}

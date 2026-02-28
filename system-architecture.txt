@@ -1,0 +1,276 @@
+# 크로스핏 커뮤니티 사이트 — 시스템 구조
+
+## 프로젝트 폴더 구조
+
+src/
+├── app/
+│   ├── (auth)/
+│   │   ├── login/
+│   │   └── register/
+│   ├── (main)/
+│   │   ├── wod/
+│   │   │   ├── [date]/
+│   │   │   └── ranking/
+│   │   ├── pr/
+│   │   ├── community/
+│   │   │   ├── [category]/
+│   │   │   └── [postId]/
+│   │   └── profile/
+│   │       └── [userId]/
+│   ├── admin/
+│   │   ├── wod/
+│   │   ├── users/
+│   │   └── reports/
+│   └── api/
+│       ├── auth/
+│       ├── wod/
+│       ├── pr/
+│       ├── posts/
+│       ├── comments/
+│       └── admin/
+├── components/
+│   ├── ui/
+│   ├── layout/
+│   ├── wod/
+│   ├── pr/
+│   ├── community/
+│   └── admin/
+├── lib/
+│   ├── prisma.ts
+│   ├── auth.ts
+│   └── utils.ts
+└── types/
+
+
+## 환경변수 (.env.example)
+
+DATABASE_URL=postgresql://user:password@db:5432/crossfit
+NEXTAUTH_URL=https://yourdomain.com
+NEXTAUTH_SECRET=
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+KAKAO_CLIENT_ID=
+KAKAO_CLIENT_SECRET=
+S3_BUCKET=
+S3_REGION=
+S3_ACCESS_KEY=
+S3_SECRET_KEY=
+
+
+## Docker 구성
+
+### docker-compose.yml
+
+services:
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf
+      - ./nginx/conf.d:/etc/nginx/conf.d
+      - ./certbot/conf:/etc/letsencrypt
+      - ./certbot/www:/var/www/certbot
+    depends_on:
+      - app
+    restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  certbot:
+    image: certbot/certbot
+    volumes:
+      - ./certbot/conf:/etc/letsencrypt
+      - ./certbot/www:/var/www/certbot
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
+
+  app:
+    build: .
+    expose:
+      - "3000"
+    depends_on:
+      - db
+    env_file: .env
+    restart: always
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  db:
+    image: postgres:16
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_USER=user
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=crossfit
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d crossfit"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  db-backup:
+    image: prodrigestivill/postgres-backup-local
+    depends_on:
+      - db
+    volumes:
+      - ./backups:/backups
+    environment:
+      - POSTGRES_HOST=db
+      - POSTGRES_DB=crossfit
+      - POSTGRES_USER=user
+      - POSTGRES_PASSWORD=password
+      - SCHEDULE=@daily
+      - BACKUP_KEEP_DAYS=7
+      - BACKUP_KEEP_WEEKS=4
+      - BACKUP_KEEP_MONTHS=6
+    restart: always
+
+volumes:
+  pgdata:
+
+
+## Nginx 설정
+
+### nginx/conf.d/default.conf
+
+upstream app {
+    server app:3000;
+}
+
+# HTTP → HTTPS 리다이렉트
+server {
+    listen 80;
+    server_name yourdomain.com;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+# HTTPS
+server {
+    listen 443 ssl;
+    server_name yourdomain.com;
+
+    ssl_certificate /etc/letsencrypt/live/yourdomain.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/yourdomain.com/privkey.pem;
+
+    client_max_body_size 20M;
+
+    # 보안 헤더
+    add_header X-Content-Type-Options nosniff;
+    add_header X-Frame-Options SAMEORIGIN;
+    add_header X-XSS-Protection "1; mode=block";
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin";
+    add_header Content-Security-Policy "default-src 'self'; img-src 'self' data: https:; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline';";
+
+    # 정적 파일 캐싱
+    location /_next/static/ {
+        proxy_pass http://app;
+        expires 365d;
+        add_header Cache-Control "public, immutable";
+    }
+
+    location /images/ {
+        proxy_pass http://app;
+        expires 30d;
+        add_header Cache-Control "public";
+    }
+
+    # API Rate Limiting
+    location /api/auth/ {
+        limit_req zone=auth burst=3 nodelay;
+        proxy_pass http://app;
+    }
+
+    location /api/ {
+        limit_req zone=api burst=20 nodelay;
+        proxy_pass http://app;
+    }
+
+    # 기본 프록시
+    location / {
+        proxy_pass http://app;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_cache_bypass $http_upgrade;
+    }
+
+    access_log /var/log/nginx/access.log;
+    error_log /var/log/nginx/error.log warn;
+}
+
+
+### nginx/nginx.conf (http 블록)
+
+http {
+    # Rate Limiting 설정
+    limit_req_zone $binary_remote_addr zone=api:10m rate=30r/m;
+    limit_req_zone $binary_remote_addr zone=auth:10m rate=5r/m;
+
+    # gzip 압축
+    gzip on;
+    gzip_vary on;
+    gzip_proxied any;
+    gzip_comp_level 6;
+    gzip_min_length 1000;
+    gzip_types
+        text/plain
+        text/css
+        text/javascript
+        application/javascript
+        application/json
+        application/xml
+        image/svg+xml;
+
+    include /etc/nginx/conf.d/*.conf;
+}
+
+
+## DB 성능 설정 (Prisma 인덱스)
+
+WODResult: @@index([wodId, createdAt]), @@index([userId])
+Post: @@index([category, createdAt]), @@index([userId])
+PR: @@index([userId, movement])
+Comment: @@index([postId, createdAt])
+DB 커넥션 풀링: Prisma 기본 connection pool 사용 (connection_limit=10)
+
+
+## 이미지 저장소 (AWS S3)
+
+- 프로필 사진, 게시판 이미지, 운동 인증 영상 → S3 업로드
+- 업로드 흐름: 클라이언트 → Presigned URL 발급(API) → S3 직접 업로드
+- S3 버킷 구조:
+  crossfit-uploads/
+  ├── profiles/{userId}/
+  ├── posts/{postId}/
+  └── wod/{wodId}/
