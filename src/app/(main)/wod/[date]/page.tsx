@@ -5,6 +5,7 @@ import { auth } from "@/lib/auth";
 import { WodCard } from "@/components/wod/WodCard";
 import { WodResultForm } from "@/components/wod/WodResultForm";
 import { WodRankingTable } from "@/components/wod/WodRankingTable";
+import { compareScores } from "@/lib/wod-score";
 import { formatDate } from "@/lib/utils";
 import type { WodType, RxScaled } from "@/types";
 
@@ -55,14 +56,17 @@ export default async function WodDatePage({ params }: PageProps) {
       })
     : null;
 
-  // 상위 10개 랭킹 미리 보기
-  const topResults = await prisma.wODResult.findMany({
+  // 상위 10개 랭킹 미리 보기 (WOD 타입에 맞게 정렬 후 상위 10개 추출)
+  const allResults = await prisma.wODResult.findMany({
     where: { wodId: wod.id },
     include: {
       user: { select: { id: true, nickname: true, profileImage: true, box: true, level: true } },
     },
-    take: 10,
   });
+
+  const topResults = allResults
+    .sort((a, b) => compareScores(a.score, b.score, wod.type as WodType))
+    .slice(0, 10);
 
   return (
     <div className="space-y-8">
@@ -95,7 +99,7 @@ export default async function WodDatePage({ params }: PageProps) {
         }))}
         wodType={wod.type as WodType}
         totalCount={wod._count.results}
-        wodId={wod.id}
+        wodDate={date}
       />
     </div>
   );

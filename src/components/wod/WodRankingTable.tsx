@@ -17,7 +17,7 @@ interface WodRankingTableProps {
   results: RankingEntry[];
   wodType: WodType;
   totalCount: number;
-  wodId: string;
+  wodDate: string;
 }
 
 const LEVEL_LABELS: Record<string, string> = {
@@ -27,7 +27,7 @@ const LEVEL_LABELS: Record<string, string> = {
   RX_PLUS: "RX+",
 };
 
-export function WodRankingTable({ results, wodType, totalCount, wodId }: WodRankingTableProps) {
+export function WodRankingTable({ results, wodType, totalCount, wodDate }: WodRankingTableProps) {
   if (results.length === 0) {
     return (
       <div className="rounded-lg border p-8 text-center text-muted-foreground">
@@ -42,7 +42,7 @@ export function WodRankingTable({ results, wodType, totalCount, wodId }: WodRank
         <h2 className="text-xl font-semibold">랭킹 ({totalCount}명)</h2>
         {totalCount > 10 && (
           <Link
-            href={`/wod/${wodId}/ranking`}
+            href={`/wod/${wodDate}/ranking`}
             className="text-sm text-primary hover:underline"
           >
             전체 보기
