@@ -35,40 +35,31 @@ interface PrDashboardProps {
 // 유틸 함수
 // ──────────────────────────────────────────────
 
-function getBestPerMovement(prs: PrRecord[]): Map<string, PrRecord> {
-  const bestMap = new Map<string, PrRecord>();
-  for (const pr of prs) {
-    const current = bestMap.get(pr.movement);
-    if (!current || isBetterRecord(pr.movement, pr.value, current.value)) {
-      bestMap.set(pr.movement, pr);
-    }
-  }
-  return bestMap;
-}
-
 function getHistoryForMovement(prs: PrRecord[], movement: string): PrRecord[] {
   return prs
     .filter((p) => p.movement === movement)
     .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 }
 
-function getRecordsForDate(prs: PrRecord[], date: string): PrRecord[] {
-  return prs.filter((pr) => pr.date.split("T")[0] === date);
+function getBestForMovement(prs: PrRecord[], movement: string): PrRecord | undefined {
+  return prs
+    .filter((p) => p.movement === movement)
+    .reduce<PrRecord | undefined>((best, pr) => {
+      if (!best || isBetterRecord(movement, pr.value, best.value)) return pr;
+      return best;
+    }, undefined);
+}
+
+function getRecordForDate(
+  prs: PrRecord[],
+  movement: string,
+  date: string
+): PrRecord | undefined {
+  return prs.find((pr) => pr.movement === movement && pr.date.split("T")[0] === date);
 }
 
 function formatValue(movement: string, value: number): string {
   return isLift(movement) ? `${value} kg` : formatSeconds(value);
-}
-
-// YYYY-MM-DD 문자열을 로컬 기준으로 하루씩 이동
-function shiftDate(dateStr: string, direction: number): string {
-  const [y, m, d] = dateStr.split("-").map(Number);
-  const date = new Date(y, m - 1, d);
-  date.setDate(date.getDate() + direction);
-  const ny = date.getFullYear();
-  const nm = String(date.getMonth() + 1).padStart(2, "0");
-  const nd = String(date.getDate()).padStart(2, "0");
-  return `${ny}-${nm}-${nd}`;
 }
 
 function todayString(): string {
@@ -79,18 +70,64 @@ function todayString(): string {
   return `${y}-${m}-${day}`;
 }
 
+function shiftDate(dateStr: string, direction: number): string {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const date = new Date(y, m - 1, d);
+  date.setDate(date.getDate() + direction);
+  const ny = date.getFullYear();
+  const nm = String(date.getMonth() + 1).padStart(2, "0");
+  const nd = String(date.getDate()).padStart(2, "0");
+  return `${ny}-${nm}-${nd}`;
+}
+
 // ──────────────────────────────────────────────
-// 종목 카드 (리프트/벤치마크 탭)
+// 날짜 네비게이션
+// ──────────────────────────────────────────────
+
+interface DateNavProps {
+  selectedDate: string;
+  onChange: (date: string) => void;
+}
+
+function DateNav({ selectedDate, onChange }: DateNavProps) {
+  const isToday = selectedDate >= todayString();
+  return (
+    <div className="mb-6 flex items-center gap-2">
+      <Button variant="outline" size="icon" onClick={() => onChange(shiftDate(selectedDate, -1))}>
+        <ChevronLeft size={16} />
+      </Button>
+      <Input
+        type="date"
+        value={selectedDate}
+        max={todayString()}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-40"
+      />
+      <Button
+        variant="outline"
+        size="icon"
+        onClick={() => onChange(shiftDate(selectedDate, 1))}
+        disabled={isToday}
+      >
+        <ChevronRight size={16} />
+      </Button>
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────
+// 종목 카드
 // ──────────────────────────────────────────────
 
 interface MovementCardProps {
   movement: string;
-  best: PrRecord | undefined;
+  dateRecord: PrRecord | undefined;   // 선택한 날짜의 기록
+  best: PrRecord | undefined;         // 전체 최고 기록 (참조용)
   allPRs: PrRecord[];
   onDelete: (prId: string) => Promise<void>;
 }
 
-function MovementCard({ movement, best, allPRs, onDelete }: MovementCardProps) {
+function MovementCard({ movement, dateRecord, best, allPRs, onDelete }: MovementCardProps) {
   const [showChart, setShowChart] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -132,141 +169,67 @@ function MovementCard({ movement, best, allPRs, onDelete }: MovementCardProps) {
         </div>
       </CardHeader>
       <CardContent>
-        {best ? (
+        {/* 선택 날짜 기록 */}
+        {dateRecord ? (
           <>
             <p className="text-2xl font-bold">
               {isLift(movement) ? (
                 <>
-                  {best.value}
+                  {dateRecord.value}
                   <span className="ml-1 text-sm font-normal text-muted-foreground">kg</span>
                 </>
               ) : (
-                formatSeconds(best.value)
+                formatSeconds(dateRecord.value)
               )}
             </p>
-            <p className="mt-1 text-xs text-muted-foreground">{formatDate(best.date)}</p>
-
-            {showChart && history.length > 1 && (
-              <div className="mt-4">
-                <PrHistoryChart history={history} movement={movement} />
-              </div>
+            {dateRecord.memo && (
+              <p className="mt-1 text-xs text-muted-foreground">{dateRecord.memo}</p>
             )}
-
-            {showHistory && (
-              <div className="mt-3 space-y-1 border-t pt-3">
-                {[...history].reverse().map((pr) => (
-                  <div key={pr.id} className="flex items-center gap-2 text-sm">
-                    <span className="shrink-0 text-muted-foreground">{formatDate(pr.date)}</span>
-                    <span className="ml-auto font-medium">{formatValue(movement, pr.value)}</span>
-                    <button
-                      onClick={() => handleDelete(pr.id)}
-                      disabled={deletingId === pr.id}
-                      className="shrink-0 text-destructive opacity-50 hover:opacity-100 disabled:cursor-not-allowed"
-                      aria-label="기록 삭제"
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
-                ))}
-              </div>
+            {/* 전체 최고 기록과 다를 경우 참조 표시 */}
+            {best && best.id !== dateRecord.id && (
+              <p className="mt-1 text-xs text-muted-foreground">
+                최고 {formatValue(movement, best.value)}
+              </p>
             )}
           </>
         ) : (
-          <p className="text-sm text-muted-foreground">기록 없음</p>
+          <div>
+            <p className="text-sm text-muted-foreground">이 날 기록 없음</p>
+            {/* 전체 최고 기록은 참조용으로 표시 */}
+            {best && (
+              <p className="mt-1 text-xs text-muted-foreground">
+                최고 {formatValue(movement, best.value)} ({formatDate(best.date)})
+              </p>
+            )}
+          </div>
         )}
-      </CardContent>
-    </Card>
-  );
-}
 
-// ──────────────────────────────────────────────
-// 날짜별 뷰
-// ──────────────────────────────────────────────
+        {showChart && history.length > 1 && (
+          <div className="mt-4">
+            <PrHistoryChart history={history} movement={movement} />
+          </div>
+        )}
 
-interface PrDateViewProps {
-  prs: PrRecord[];
-  onDelete: (prId: string) => Promise<void>;
-}
-
-function PrDateView({ prs, onDelete }: PrDateViewProps) {
-  const [selectedDate, setSelectedDate] = useState(todayString);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
-
-  const isToday = selectedDate >= todayString();
-
-  async function handleDelete(prId: string) {
-    setDeletingId(prId);
-    try {
-      await onDelete(prId);
-    } finally {
-      setDeletingId(null);
-    }
-  }
-
-  const records = getRecordsForDate(prs, selectedDate);
-
-  return (
-    <div className="space-y-6">
-      {/* 날짜 네비게이션 */}
-      <div className="flex items-center gap-2">
-        <Button variant="outline" size="icon" onClick={() => setSelectedDate(shiftDate(selectedDate, -1))}>
-          <ChevronLeft size={16} />
-        </Button>
-        <Input
-          type="date"
-          value={selectedDate}
-          max={todayString()}
-          onChange={(e) => setSelectedDate(e.target.value)}
-          className="w-40"
-        />
-        <Button
-          variant="outline"
-          size="icon"
-          onClick={() => setSelectedDate(shiftDate(selectedDate, 1))}
-          disabled={isToday}
-        >
-          <ChevronRight size={16} />
-        </Button>
-      </div>
-
-      {/* 해당 날짜의 기록 */}
-      {records.length === 0 ? (
-        <p className="py-10 text-center text-muted-foreground">이 날짜에 기록된 PR이 없습니다</p>
-      ) : (
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
-          {records.map((pr) => (
-            <Card key={pr.id}>
-              <CardContent className="pt-4">
-                <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  {pr.movement}
-                </p>
-                <p className="text-2xl font-bold">
-                  {isLift(pr.movement) ? (
-                    <>
-                      {pr.value}
-                      <span className="ml-1 text-sm font-normal text-muted-foreground">kg</span>
-                    </>
-                  ) : (
-                    formatSeconds(pr.value)
-                  )}
-                </p>
-                {pr.memo && (
-                  <p className="mt-1 text-xs text-muted-foreground">{pr.memo}</p>
-                )}
+        {showHistory && (
+          <div className="mt-3 space-y-1 border-t pt-3">
+            {[...history].reverse().map((pr) => (
+              <div key={pr.id} className="flex items-center gap-2 text-sm">
+                <span className="shrink-0 text-muted-foreground">{formatDate(pr.date)}</span>
+                <span className="ml-auto font-medium">{formatValue(movement, pr.value)}</span>
                 <button
                   onClick={() => handleDelete(pr.id)}
                   disabled={deletingId === pr.id}
-                  className="mt-3 text-destructive opacity-50 hover:opacity-100 disabled:cursor-not-allowed"
+                  className="shrink-0 text-destructive opacity-50 hover:opacity-100 disabled:cursor-not-allowed"
                   aria-label="기록 삭제"
                 >
                   <Trash2 size={14} />
                 </button>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      )}
-    </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -276,7 +239,7 @@ function PrDateView({ prs, onDelete }: PrDateViewProps) {
 
 export function PrDashboard({ prs }: PrDashboardProps) {
   const router = useRouter();
-  const bestMap = getBestPerMovement(prs);
+  const [selectedDate, setSelectedDate] = useState(todayString);
 
   async function handleDelete(prId: string) {
     try {
@@ -298,16 +261,17 @@ export function PrDashboard({ prs }: PrDashboardProps) {
       <TabsList>
         <TabsTrigger value="lift">리프트</TabsTrigger>
         <TabsTrigger value="benchmark">벤치마크 WOD</TabsTrigger>
-        <TabsTrigger value="date">날짜별</TabsTrigger>
       </TabsList>
 
       <TabsContent value="lift" className="mt-6">
+        <DateNav selectedDate={selectedDate} onChange={setSelectedDate} />
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
           {LIFT_MOVEMENTS.map((movement) => (
             <MovementCard
               key={movement}
               movement={movement}
-              best={bestMap.get(movement)}
+              dateRecord={getRecordForDate(prs, movement, selectedDate)}
+              best={getBestForMovement(prs, movement)}
               allPRs={prs}
               onDelete={handleDelete}
             />
@@ -316,21 +280,19 @@ export function PrDashboard({ prs }: PrDashboardProps) {
       </TabsContent>
 
       <TabsContent value="benchmark" className="mt-6">
+        <DateNav selectedDate={selectedDate} onChange={setSelectedDate} />
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
           {BENCHMARK_WODS.map((movement) => (
             <MovementCard
               key={movement}
               movement={movement}
-              best={bestMap.get(movement)}
+              dateRecord={getRecordForDate(prs, movement, selectedDate)}
+              best={getBestForMovement(prs, movement)}
               allPRs={prs}
               onDelete={handleDelete}
             />
           ))}
         </div>
-      </TabsContent>
-
-      <TabsContent value="date" className="mt-6">
-        <PrDateView prs={prs} onDelete={handleDelete} />
       </TabsContent>
     </Tabs>
   );
